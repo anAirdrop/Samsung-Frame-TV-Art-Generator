@@ -1,0 +1,89 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "frame art",
+      "intents": [
+        {
+          "name": "GenerateArtIntent",
+          "samples": [
+            "make an image of {imageDescription} for the {roomName} TV",
+            "generate {imageDescription} for the {roomName}",
+            "create art of {imageDescription} for {roomName} TV",
+            "put {imageDescription} on the {roomName} TV",
+            "show {imageDescription} on {roomName}",
+            "display {imageDescription} in the {roomName}",
+            "paint {imageDescription} for the {roomName} TV",
+            "make {imageDescription} for {roomName}",
+            "create {imageDescription} for the {roomName} TV",
+            "generate an image of {imageDescription} for {roomName}",
+            "set {imageDescription} on the {roomName} TV",
+            "draw {imageDescription} for the {roomName}"
+          ],
+          "slots": [
+            {
+              "name": "imageDescription",
+              "type": "AMAZON.SearchQuery"
+            },
+            {
+              "name": "roomName",
+              "type": "ROOM_LIST"
+            }
+          ]
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        }
+      ],
+      "types": [
+        {
+          "name": "ROOM_LIST",
+          "values": [
+            {
+              "name": {
+                "value": "living room",
+                "synonyms": ["lounge", "main room", "front room", "main tv"]
+              }
+            },
+            {
+              "name": {
+                "value": "bedroom",
+                "synonyms": ["master bedroom", "main bedroom"]
+              }
+            },
+            {
+              "name": {
+                "value": "office",
+                "synonyms": ["study", "den", "home office"]
+              }
+            },
+            {
+              "name": {
+                "value": "dining room",
+                "synonyms": ["dining"]
+              }
+            },
+            {
+              "name": {
+                "value": "family room",
+                "synonyms": ["rec room", "game room"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

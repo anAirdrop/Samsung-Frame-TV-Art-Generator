@@ -1,0 +1,57 @@
+# ============================================
+# Frame TV Art Generator - Configuration
+# ============================================
+# Copy this file to config.yaml and customize:
+#   cp config.yaml.example config.yaml
+
+# --- Image Generation Settings ---
+image:
+  # Provider: "openai", "gemini", or "grok"
+  provider: "openai"
+
+  # OpenAI settings
+  openai:
+    model: "gpt-image-1"        # or "gpt-image-1-mini" for lower cost
+    quality: "high"              # low, medium, high
+    size: "1536x1024"            # landscape, closest to 16:9
+
+  # Google Gemini settings
+  gemini:
+    model: "imagen-3.0-generate-002"
+
+  # xAI Grok settings
+  grok:
+    model: "grok-2-image"
+
+  # Output settings (applied to all providers)
+  output:
+    width: 3840                  # Samsung Frame TV native width
+    height: 2160                 # Samsung Frame TV native height
+    format: "JPEG"
+    jpeg_quality: 95
+
+# Optional prompt engineering (prepended/appended to user's description)
+prompt_prefix: "Professional art suitable for display on a wall. "
+prompt_suffix: " High resolution, vivid colors, suitable for home decor."
+
+# --- Samsung Frame TVs ---
+# Add each TV with a unique key, its IP address, and room aliases
+tvs:
+  living_room:
+    host: "192.168.1.100"
+    port: 8002
+    token_file: "tokens/living_room_token.txt"
+    aliases:
+      - "living room"
+      - "lounge"
+      - "main tv"
+    matte: "none"                # matte style: none, modern_apricot, etc.
+
+  bedroom:
+    host: "192.168.1.101"
+    port: 8002
+    token_file: "tokens/bedroom_token.txt"
+    aliases:
+      - "bedroom"
+      - "master bedroom"
+    matte: "none"

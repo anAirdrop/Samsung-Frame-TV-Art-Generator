@@ -1,0 +1,17 @@
+services:
+  frame-art:
+    build: .
+    # network_mode: host is REQUIRED for Samsung TV WebSocket communication.
+    # The TV must be reachable on the local network via its IP address.
+    # Docker bridge networking will NOT work for this.
+    network_mode: host
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+      - tv-tokens:/data/tokens
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app/src
+
+volumes:
+  tv-tokens:
