@@ -7,7 +7,7 @@ Generate AI art with your voice and display it on Samsung Frame TVs. Speak a com
 ## Features
 
 - **Voice Control** — Works with both Amazon Alexa and Apple Siri/HomePod
-- **Multi-Provider AI** — Choose between OpenAI (gpt-image-1), Google Gemini (Imagen), or xAI Grok
+- **Configurable fal.ai Models** — Use one fal.ai API key and select the text-to-image model in configuration
 - **Multiple TVs** — Support any number of Samsung Frame TVs across different rooms
 - **Push Notifications** — Get notified on your phone when the art is ready (via [ntfy.sh](https://ntfy.sh))
 - **Self-Hosted** — Runs on your own hardware (Raspberry Pi, NAS, home server, etc.)
@@ -22,7 +22,7 @@ Voice Command → Alexa/Siri → Webhook → AI Image Generation → Resize to 4
 
 1. You speak a command to Alexa or Siri
 2. The voice assistant sends the request to your self-hosted server
-3. The server generates an image using your chosen AI provider
+3. The server generates an image using your selected fal.ai model
 4. The image is resized to 3840x2160 (native Frame TV resolution)
 5. The image is uploaded to your Samsung Frame TV via WebSocket
 6. You get a push notification confirming it's done
@@ -33,7 +33,7 @@ Voice Command → Alexa/Siri → Webhook → AI Image Generation → Resize to 4
 
 - Python 3.11+ or Docker
 - A Samsung Frame TV (2019 or newer) on your local network
-- An API key for at least one image provider ([OpenAI](https://platform.openai.com/api-keys), [Google AI](https://aistudio.google.com/apikey), or [xAI](https://console.x.ai/))
+- A [fal.ai API key](https://fal.ai/dashboard/keys)
 
 ### 1. Clone and Configure
 
@@ -48,14 +48,21 @@ cp config.yaml.example config.yaml
 
 Edit `.env` with your API keys:
 ```bash
-OPENAI_API_KEY=sk-your-key-here        # If using OpenAI
+FAL_KEY=your-fal-key-here
 WEBHOOK_API_KEY=your-random-secret      # Shared secret for Siri Shortcuts
 ```
 
 Edit `config.yaml` with your TV details:
 ```yaml
 image:
-  provider: "openai"                    # openai, gemini, or grok
+  fal:
+    model: "fal-ai/nano-banana-2"
+    arguments:
+      aspect_ratio: "16:9"
+      resolution: "4K"
+      num_images: 1
+      output_format: "jpeg"
+      limit_generations: true
 
 tvs:
   living_room:
@@ -119,7 +126,7 @@ Generate an image and display it on a TV.
 | `description` | string | Yes | Image description (what to generate) |
 | `room` | string | Yes | Room name matching a TV alias in config |
 | `api_key` | string | Yes | Your `WEBHOOK_API_KEY` |
-| `provider` | string | No | Override image provider (openai/gemini/grok) |
+| `model` | string | No | Override the configured fal.ai model endpoint |
 
 **Response:**
 ```json
@@ -143,7 +150,7 @@ Health check with TV reachability status.
 ```json
 {
   "status": "ok",
-  "provider": "openai",
+  "model": "fal-ai/nano-banana-2",
   "tvs": {
     "living_room": "reachable",
     "bedroom": "unreachable"
@@ -169,9 +176,7 @@ For Alexa and Siri to reach your server, it needs to be accessible from the inte
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `OPENAI_API_KEY` | If using OpenAI | — | OpenAI API key |
-| `GEMINI_API_KEY` | If using Gemini | — | Google Gemini API key |
-| `GROK_API_KEY` | If using Grok | — | xAI Grok API key |
+| `FAL_KEY` | Yes | — | fal.ai API key |
 | `WEBHOOK_API_KEY` | Yes | — | Shared secret for webhook auth |
 | `NTFY_TOPIC` | No | `frame-tv-art` | ntfy.sh notification topic |
 | `NTFY_SERVER` | No | `https://ntfy.sh` | ntfy server URL |
@@ -183,13 +188,26 @@ For Alexa and Siri to reach your server, it needs to be accessible from the inte
 
 See [config.yaml.example](config.yaml.example) for all options with inline documentation.
 
+### Choosing a fal.ai Model
+
+1. Open the model's API page in the [fal.ai model gallery](https://fal.ai/models).
+2. Copy its endpoint ID, such as `fal-ai/nano-banana-2`.
+3. Set that value at `image.fal.model` in `config.yaml`.
+4. Copy any supported model inputs into `image.fal.arguments`. The application
+   always supplies `prompt`, so do not add a second prompt there.
+
+The selected endpoint must be a text-to-image model that returns an `images`
+list containing image URLs. You can temporarily override the configured model
+with the optional `model` field on `POST /api/generate`; configured arguments
+are still sent to the override model, so they must be compatible with it.
+
 ## Troubleshooting
 
 | Problem | Solution |
 |---|---|
 | TV not found / unreachable | Ensure TV is powered on, in Art Mode, and on the same network. Run `python scripts/test_tv_connection.py` |
 | Pairing failed | Make sure you accept the popup on the TV within 30 seconds |
-| Image generation failed | Check your API key and provider settings. Try a different provider |
+| Image generation failed | Check `FAL_KEY`, the model ID, and the arguments supported by that model's fal.ai API page |
 | Alexa skill not responding | Verify your server is accessible from the internet and the endpoint URL is correct |
 | Siri shortcut fails | Check the webhook URL and API key in the shortcut settings |
 

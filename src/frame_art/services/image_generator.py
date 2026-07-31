@@ -1,158 +1,147 @@
-"""Multi-provider AI image generation service.
-
-Supports OpenAI (gpt-image-1), Google Gemini (Imagen), and xAI Grok.
-"""
+"""AI image generation through a configurable fal.ai model endpoint."""
 
 from __future__ import annotations
 
-import base64
+import asyncio
 import logging
-from abc import ABC, abstractmethod
-from io import BytesIO
-from typing import Optional
 
-from ..config import AppConfig, Settings
+import fal_client
+import httpx
+from pydantic import BaseModel, ValidationError
+
+from ..config import AppConfig, FalArgument, Settings
 
 logger = logging.getLogger(__name__)
 
-
-class ImageProvider(ABC):
-    """Base class for image generation providers."""
-
-    @abstractmethod
-    async def generate(self, prompt: str) -> bytes:
-        """Generate an image from a text prompt. Returns raw image bytes."""
+_MAX_ATTEMPTS = 3
 
 
-class OpenAIProvider(ImageProvider):
-    """Generate images using OpenAI's gpt-image-1."""
+class FalImage(BaseModel):
+    url: str
 
-    def __init__(self, api_key: str, model: str, quality: str, size: str):
-        from openai import AsyncOpenAI
 
-        self.client = AsyncOpenAI(api_key=api_key)
-        self.model = model
-        self.quality = quality
-        self.size = size
+class FalImageResult(BaseModel):
+    images: list[FalImage]
 
-    async def generate(self, prompt: str) -> bytes:
-        logger.info("Generating image with OpenAI %s", self.model)
-        response = await self.client.images.generate(
-            model=self.model,
-            prompt=prompt,
-            size=self.size,
-            quality=self.quality,
-            n=1,
+
+class FalResponseError(RuntimeError):
+    """Raised when a fal.ai model returns an incompatible response."""
+
+
+def extract_image_url(result: object, model: str) -> str:
+    """Validate a fal.ai text-to-image response and return its first URL."""
+    try:
+        parsed = FalImageResult.model_validate(result)
+    except ValidationError as error:
+        raise FalResponseError(
+            f"fal.ai model '{model}' returned an incompatible response: {result!r}"
+        ) from error
+
+    if not parsed.images:
+        raise FalResponseError(
+            f"fal.ai model '{model}' returned no images: {result!r}"
         )
-        # gpt-image-1 returns b64_json by default
-        if response.data[0].b64_json:
-            return base64.b64decode(response.data[0].b64_json)
-        # Fallback: download from URL
-        import httpx
 
-        async with httpx.AsyncClient() as http:
-            img_resp = await http.get(response.data[0].url)
-            img_resp.raise_for_status()
-            return img_resp.content
+    return parsed.images[0].url
 
 
-class GeminiProvider(ImageProvider):
-    """Generate images using Google Gemini's Imagen model."""
+async def download_image(url: str, model: str) -> bytes:
+    """Download a generated image with bounded retries."""
+    last_error: httpx.HTTPError | None = None
 
-    def __init__(self, api_key: str, model: str):
-        self.api_key = api_key
-        self.model = model
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.content
+            except httpx.HTTPError as error:
+                last_error = error
+                logger.warning(
+                    "fal.ai image download failed",
+                    extra={
+                        "attempt": attempt,
+                        "model": model,
+                        "url": url,
+                        "error": str(error),
+                    },
+                )
+                if attempt < _MAX_ATTEMPTS:
+                    await asyncio.sleep(2 ** (attempt - 1))
 
-    async def generate(self, prompt: str) -> bytes:
-        from google import genai
-
-        logger.info("Generating image with Gemini %s", self.model)
-        client = genai.Client(api_key=self.api_key)
-        response = client.models.generate_images(
-            model=self.model,
-            prompt=prompt,
-            config=genai.types.GenerateImagesConfig(number_of_images=1),
+    if last_error is None:
+        raise RuntimeError(
+            f"fal.ai image download failed without an HTTP error: model={model}, url={url}"
         )
-        if not response.generated_images:
-            raise RuntimeError("Gemini returned no images")
-        return response.generated_images[0].image.image_bytes
+    raise last_error
 
 
-class GrokProvider(ImageProvider):
-    """Generate images using xAI's Grok (OpenAI-compatible API)."""
+class FalProvider:
+    """Connector for fal.ai text-to-image model endpoints."""
 
-    def __init__(self, api_key: str, model: str):
-        from openai import AsyncOpenAI
-
-        self.client = AsyncOpenAI(
-            api_key=api_key,
-            base_url="https://api.x.ai/v1",
-        )
+    def __init__(self, api_key: str, model: str) -> None:
+        self.client = fal_client.AsyncClient(key=api_key, default_timeout=120.0)
         self.model = model
 
-    async def generate(self, prompt: str) -> bytes:
-        logger.info("Generating image with Grok %s", self.model)
-        response = await self.client.images.generate(
-            model=self.model,
-            prompt=prompt,
-            n=1,
-        )
-        if response.data[0].b64_json:
-            return base64.b64decode(response.data[0].b64_json)
-        import httpx
+    async def generate(
+        self, prompt: str, configured_arguments: dict[str, FalArgument]
+    ) -> bytes:
+        arguments: dict[str, FalArgument] = {
+            **configured_arguments,
+            "prompt": prompt,
+        }
+        result = await self._subscribe(arguments)
+        image_url = extract_image_url(result, self.model)
+        return await download_image(image_url, self.model)
 
-        async with httpx.AsyncClient() as http:
-            img_resp = await http.get(response.data[0].url)
-            img_resp.raise_for_status()
-            return img_resp.content
+    async def _subscribe(
+        self, arguments: dict[str, FalArgument]
+    ) -> object:
+        last_error: fal_client.FalClientError | None = None
 
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                logger.info(
+                    "Generating image with fal.ai",
+                    extra={"attempt": attempt, "model": self.model},
+                )
+                return await self.client.subscribe(
+                    self.model,
+                    arguments=arguments,
+                    client_timeout=120.0,
+                )
+            except fal_client.FalClientError as error:
+                last_error = error
+                logger.warning(
+                    "fal.ai generation request failed",
+                    extra={
+                        "attempt": attempt,
+                        "model": self.model,
+                        "error": str(error),
+                    },
+                )
+                if attempt < _MAX_ATTEMPTS:
+                    await asyncio.sleep(2 ** (attempt - 1))
 
-def create_provider(
-    provider_name: str, config: AppConfig, settings: Settings
-) -> ImageProvider:
-    """Factory to create the appropriate image provider."""
-    if provider_name == "openai":
-        if not settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is required when using OpenAI provider")
-        return OpenAIProvider(
-            api_key=settings.openai_api_key,
-            model=config.image.openai.model,
-            quality=config.image.openai.quality,
-            size=config.image.openai.size,
-        )
-    elif provider_name == "gemini":
-        if not settings.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is required when using Gemini provider")
-        return GeminiProvider(
-            api_key=settings.gemini_api_key,
-            model=config.image.gemini.model,
-        )
-    elif provider_name == "grok":
-        if not settings.grok_api_key:
-            raise ValueError("GROK_API_KEY is required when using Grok provider")
-        return GrokProvider(
-            api_key=settings.grok_api_key,
-            model=config.image.grok.model,
-        )
-    else:
-        raise ValueError(
-            f"Unknown image provider '{provider_name}'. "
-            "Supported: openai, gemini, grok"
-        )
+        if last_error is None:
+            raise RuntimeError(
+                f"fal.ai generation failed without a client error: model={self.model}"
+            )
+        raise last_error
 
 
 async def generate_image(
     description: str,
     config: AppConfig,
     settings: Settings,
-    provider_override: Optional[str] = None,
+    model_override: str | None,
 ) -> bytes:
-    """Generate an image using the configured (or overridden) provider.
+    """Generate an image using the configured or request-specific fal.ai model."""
+    if not settings.fal_key:
+        raise ValueError("FAL_KEY is required for image generation")
 
-    Returns raw image bytes (PNG or JPEG depending on provider).
-    """
-    provider_name = provider_override or config.image.provider
-    provider = create_provider(provider_name, config, settings)
-
+    fal_config = config.image.fal
+    model = model_override or fal_config.model
     full_prompt = f"{config.prompt_prefix}{description}{config.prompt_suffix}"
-    return await provider.generate(full_prompt)
+    provider = FalProvider(api_key=settings.fal_key, model=model)
+    return await provider.generate(full_prompt, fal_config.arguments)

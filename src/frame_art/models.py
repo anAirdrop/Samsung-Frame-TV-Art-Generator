@@ -13,9 +13,11 @@ class GenerateRequest(BaseModel):
     description: str = Field(..., min_length=3, description="Image description")
     room: str = Field(..., min_length=1, description="Room name / TV location")
     api_key: str = Field(..., min_length=1, description="Webhook API key")
-    provider: Optional[str] = Field(
-        None, description="Override image provider (openai, gemini, grok)"
+    model: Optional[str] = Field(
+        None, description="Override the configured fal.ai model endpoint"
     )
+
+    model_config = {"extra": "forbid"}
 
 
 class GenerateResponse(BaseModel):

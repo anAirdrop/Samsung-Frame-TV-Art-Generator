@@ -13,7 +13,7 @@ def client(sample_config):
     with patch("frame_art.routers.webhook.Settings") as mock_settings_cls, \
          patch("frame_art.routers.webhook.load_config") as mock_load:
         mock_settings_cls.return_value = Settings(
-            openai_api_key="sk-test",
+            fal_key="fal-test",
             webhook_api_key="test-secret",
         )
         mock_load.return_value = sample_config

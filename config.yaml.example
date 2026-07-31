@@ -6,24 +6,20 @@
 
 # --- Image Generation Settings ---
 image:
-  # Provider: "openai", "gemini", or "grok"
-  provider: "openai"
+  # Choose any fal.ai text-to-image endpoint that accepts `prompt` and
+  # returns an `images` list. Find model IDs at https://fal.ai/models.
+  fal:
+    model: "fal-ai/nano-banana-2"
+    # These arguments are passed directly to the selected model. Check that
+    # model's fal.ai API page because supported arguments differ by model.
+    arguments:
+      aspect_ratio: "16:9"
+      resolution: "4K"
+      num_images: 1
+      output_format: "jpeg"
+      limit_generations: true
 
-  # OpenAI settings
-  openai:
-    model: "gpt-image-1"        # or "gpt-image-1-mini" for lower cost
-    quality: "high"              # low, medium, high
-    size: "1536x1024"            # landscape, closest to 16:9
-
-  # Google Gemini settings
-  gemini:
-    model: "imagen-3.0-generate-002"
-
-  # xAI Grok settings
-  grok:
-    model: "grok-2-image"
-
-  # Output settings (applied to all providers)
+  # Output settings applied after fal.ai generation
   output:
     width: 3840                  # Samsung Frame TV native width
     height: 2160                 # Samsung Frame TV native height

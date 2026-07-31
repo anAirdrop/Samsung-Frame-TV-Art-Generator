@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypeAlias
 
 import yaml
 from pydantic import BaseModel, Field
@@ -18,18 +18,23 @@ class TVConfig(BaseModel):
     matte: str = "none"
 
 
-class OpenAIConfig(BaseModel):
-    model: str = "gpt-image-1"
-    quality: str = "high"
-    size: str = "1536x1024"
+FalScalar: TypeAlias = str | int | float | bool | None
+FalList: TypeAlias = list[FalScalar]
+FalObject: TypeAlias = dict[str, FalScalar | FalList]
+FalArgument: TypeAlias = FalScalar | FalList | FalObject | list[FalObject]
 
 
-class GeminiConfig(BaseModel):
-    model: str = "imagen-3.0-generate-002"
-
-
-class GrokConfig(BaseModel):
-    model: str = "grok-2-image"
+class FalConfig(BaseModel):
+    model: str = "fal-ai/nano-banana-2"
+    arguments: dict[str, FalArgument] = Field(
+        default_factory=lambda: {
+            "aspect_ratio": "16:9",
+            "resolution": "4K",
+            "num_images": 1,
+            "output_format": "jpeg",
+            "limit_generations": True,
+        }
+    )
 
 
 class OutputConfig(BaseModel):
@@ -40,10 +45,7 @@ class OutputConfig(BaseModel):
 
 
 class ImageConfig(BaseModel):
-    provider: str = "openai"
-    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
-    gemini: GeminiConfig = Field(default_factory=GeminiConfig)
-    grok: GrokConfig = Field(default_factory=GrokConfig)
+    fal: FalConfig = Field(default_factory=FalConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
 
 
@@ -59,9 +61,7 @@ class AppConfig(BaseModel):
 class Settings(BaseSettings):
     """Secrets and server settings loaded from environment / .env file."""
 
-    openai_api_key: str = ""
-    gemini_api_key: str = ""
-    grok_api_key: str = ""
+    fal_key: str = ""
     webhook_api_key: str = ""
     ntfy_topic: str = "frame-tv-art"
     ntfy_server: str = "https://ntfy.sh"

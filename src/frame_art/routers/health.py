@@ -25,6 +25,6 @@ async def health_check() -> dict:
 
     return {
         "status": "ok",
-        "provider": config.image.provider,
+        "model": config.image.fal.model,
         "tvs": tv_status,
     }

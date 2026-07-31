@@ -52,18 +52,18 @@ async def generate_art(
     notifier = Notifier(settings.ntfy_server, settings.ntfy_topic)
 
     try:
-        # Step 1: Generate image with chosen provider
-        provider = request.provider or config.image.provider
+        # Step 1: Generate image with the configured fal.ai model
+        model = request.model or config.image.fal.model
         raw_image = await generate_image(
             description=request.description,
             config=config,
             settings=settings,
-            provider_override=provider,
+            model_override=request.model,
         )
         logger.info(
-            "Image generated (%d bytes) with provider '%s'",
+            "Image generated (%d bytes) with fal.ai model '%s'",
             len(raw_image),
-            provider,
+            model,
         )
 
         # Step 2: Resize to TV resolution

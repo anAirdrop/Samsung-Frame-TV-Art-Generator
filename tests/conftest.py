@@ -2,15 +2,23 @@
 
 import pytest
 
-from frame_art.config import AppConfig, ImageConfig, OpenAIConfig, OutputConfig, TVConfig
+from frame_art.config import AppConfig, FalConfig, ImageConfig, OutputConfig, TVConfig
 
 
 @pytest.fixture
 def sample_config():
     return AppConfig(
         image=ImageConfig(
-            provider="openai",
-            openai=OpenAIConfig(model="gpt-image-1", quality="low", size="1024x1024"),
+            fal=FalConfig(
+                model="fal-ai/nano-banana-2",
+                arguments={
+                    "aspect_ratio": "16:9",
+                    "resolution": "4K",
+                    "num_images": 1,
+                    "output_format": "jpeg",
+                    "limit_generations": True,
+                },
+            ),
             output=OutputConfig(width=3840, height=2160, format="JPEG", jpeg_quality=85),
         ),
         prompt_prefix="Art: ",

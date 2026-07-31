@@ -165,7 +165,10 @@ async def _async_generate(description: str, room: str) -> None:
 
     try:
         raw_image = await generate_image(
-            description=description, config=config, settings=settings
+            description=description,
+            config=config,
+            settings=settings,
+            model_override=None,
         )
         processed = process_image(raw_image, config.image.output)
 

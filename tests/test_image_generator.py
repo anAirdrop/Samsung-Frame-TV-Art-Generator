@@ -1,78 +1,88 @@
-"""Tests for multi-provider image generation service."""
+"""Tests for fal.ai image generation."""
 
-import base64
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from frame_art.config import AppConfig, Settings
 from frame_art.services.image_generator import (
-    GrokProvider,
-    OpenAIProvider,
-    create_provider,
+    FalProvider,
+    FalResponseError,
+    extract_image_url,
     generate_image,
 )
 
 
-def test_create_provider_openai():
-    config = AppConfig()
-    settings = Settings(openai_api_key="sk-test")
-    provider = create_provider("openai", config, settings)
-    assert isinstance(provider, OpenAIProvider)
+def test_extract_image_url() -> None:
+    result = {"images": [{"url": "https://example.com/image.jpg"}]}
+
+    assert extract_image_url(result, "fal-ai/nano-banana-2") == result["images"][0]["url"]
 
 
-def test_create_provider_missing_key():
-    config = AppConfig()
-    settings = Settings()
-    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-        create_provider("openai", config, settings)
+def test_extract_image_url_rejects_incompatible_response() -> None:
+    with pytest.raises(FalResponseError, match="incompatible response"):
+        extract_image_url({"image": {"url": "https://example.com/image.jpg"}}, "other/model")
 
 
-def test_create_provider_unknown():
-    config = AppConfig()
-    settings = Settings()
-    with pytest.raises(ValueError, match="Unknown image provider"):
-        create_provider("dalle2", config, settings)
+def test_extract_image_url_rejects_empty_images() -> None:
+    with pytest.raises(FalResponseError, match="returned no images"):
+        extract_image_url({"images": []}, "fal-ai/nano-banana-2")
 
 
 @pytest.mark.asyncio
-async def test_generate_image_uses_correct_provider():
+async def test_generate_image_requires_fal_key() -> None:
+    with pytest.raises(ValueError, match="FAL_KEY"):
+        await generate_image(
+            description="a sunset",
+            config=AppConfig(),
+            settings=Settings(),
+            model_override=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_image_uses_configured_model() -> None:
     config = AppConfig(prompt_prefix="Art: ", prompt_suffix=" HD.")
 
-    fake_image = b"fake-png-data"
-    fake_b64 = base64.b64encode(fake_image).decode()
-
-    mock_response = MagicMock()
-    mock_response.data = [MagicMock(b64_json=fake_b64, url=None)]
-
-    with patch("frame_art.services.image_generator.OpenAIProvider.generate",
-               new_callable=AsyncMock, return_value=fake_image) as mock_gen:
+    with patch.object(
+        FalProvider,
+        "generate",
+        new_callable=AsyncMock,
+        return_value=b"image",
+    ) as generate:
         result = await generate_image(
             description="a sunset",
             config=config,
-            settings=Settings(openai_api_key="sk-test"),
+            settings=Settings(fal_key="fal-test"),
+            model_override=None,
         )
-        mock_gen.assert_called_once_with("Art: a sunset HD.")
-        assert result == fake_image
+
+    assert result == b"image"
+    generate.assert_awaited_once_with(
+        "Art: a sunset HD.", config.image.fal.arguments
+    )
 
 
 @pytest.mark.asyncio
-async def test_generate_image_provider_override():
-    config = AppConfig(image=AppConfig().image)
-    config.image.provider = "openai"
+async def test_generate_image_accepts_model_override() -> None:
+    config = AppConfig()
 
-    with patch("frame_art.services.image_generator.create_provider") as mock_create:
-        mock_provider = AsyncMock()
-        mock_provider.generate.return_value = b"img"
-        mock_create.return_value = mock_provider
-
+    with patch.object(
+        FalProvider,
+        "generate",
+        new_callable=AsyncMock,
+        return_value=b"image",
+    ), patch(
+        "frame_art.services.image_generator.FalProvider.__init__",
+        return_value=None,
+    ) as initialize:
         await generate_image(
-            description="test",
+            description="a mountain",
             config=config,
-            settings=Settings(grok_api_key="xai-test"),
-            provider_override="grok",
+            settings=Settings(fal_key="fal-test"),
+            model_override="fal-ai/flux/krea",
         )
-        # Should use grok, not the default openai
-        mock_create.assert_called_once_with(
-            "grok", config, Settings(grok_api_key="xai-test")
-        )
+
+    initialize.assert_called_once_with(
+        api_key="fal-test", model="fal-ai/flux/krea"
+    )
