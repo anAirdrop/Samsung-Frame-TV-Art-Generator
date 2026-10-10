@@ -11,16 +11,13 @@ from ..config import OutputConfig
 
 def process_image(
     image_data: bytes,
-    output: OutputConfig | None = None,
+    output: OutputConfig,
 ) -> bytes:
     """Resize an image to the TV's native resolution and convert to JPEG.
 
     Uses Lanczos resampling and letterbox/pillarbox padding to preserve
     aspect ratio without cropping.
     """
-    if output is None:
-        output = OutputConfig()
-
     img = Image.open(BytesIO(image_data))
     target_w, target_h = output.width, output.height
     target_ratio = target_w / target_h

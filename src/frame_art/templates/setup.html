@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Frame Art Setup</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #111; color: #f5f1e8; }
+    main { width: min(680px, calc(100% - 32px)); margin: 48px auto; }
+    .card { background: #1c1c1c; border: 1px solid #3a3936; border-radius: 18px; padding: 28px; box-shadow: 0 18px 60px #0008; }
+    h1 { margin-top: 0; font-family: Georgia, serif; font-size: 2.4rem; }
+    p { color: #c9c4b8; line-height: 1.55; }
+    label { display: block; margin: 18px 0 6px; font-weight: 650; }
+    input { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #555; border-radius: 10px; background: #111; color: inherit; font: inherit; }
+    button { margin-top: 20px; padding: 12px 18px; border: 0; border-radius: 999px; background: #e7b966; color: #211707; font-weight: 750; cursor: pointer; }
+    button.secondary { background: #363532; color: #fff; margin-right: 8px; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #message { white-space: pre-wrap; padding-top: 16px; min-height: 24px; }
+    .secret { word-break: break-all; padding: 12px; border-radius: 10px; background: #0d0d0d; border: 1px solid #444; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <h1>Frame Art</h1>
+    <p id="intro">Connect your Samsung Frame TV and fal.ai account. Everything stays on this device except prompts and generated images sent to fal.ai.</p>
+    <div id="configured" class="hidden">
+      <h2>Frame Art is configured</h2>
+      <p>The service is ready. Use the Siri or Alexa instructions in the project documentation to connect your voice assistant.</p>
+    </div>
+    <form id="setup-form">
+      <button class="secondary" id="discover" type="button">Find TVs</button>
+      <p id="discoveries"></p>
+      <label for="tv-host">TV IP address</label>
+      <input id="tv-host" required placeholder="192.168.1.100" inputmode="decimal">
+      <label for="room">Room name</label>
+      <input id="room" required value="living room">
+      <label for="aliases">Other names, separated by commas</label>
+      <input id="aliases" value="lounge, main TV">
+      <label for="fal-key">fal.ai API key</label>
+      <input id="fal-key" required type="password" autocomplete="off">
+      <label for="prompt">First test image</label>
+      <input id="prompt" required value="a peaceful landscape at golden hour">
+      <button id="submit" type="submit">Pair TV and finish setup</button>
+    </form>
+    <div id="result" class="hidden">
+      <h2>Setup complete</h2>
+      <p>Save this API key in your password manager. Siri uses it as a Bearer token:</p>
+      <p id="secret" class="secret"></p>
+    </div>
+    <p id="message" role="status"></p>
+  </section>
+</main>
+<script>
+const form = document.querySelector('#setup-form');
+const message = document.querySelector('#message');
+const submit = document.querySelector('#submit');
+
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const body = await response.json();
+  if (!response.ok) {
+    const detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+    throw new Error(detail || `Request failed (${response.status})`);
+  }
+  return body;
+}
+
+async function showCurrentState() {
+  const state = await requestJson('/api/setup/status');
+  if (state.configured) {
+    form.classList.add('hidden');
+    document.querySelector('#intro').classList.add('hidden');
+    document.querySelector('#configured').classList.remove('hidden');
+  }
+}
+
+document.querySelector('#discover').addEventListener('click', async event => {
+  event.currentTarget.disabled = true;
+  message.textContent = 'Searching the local network…';
+  try {
+    const televisions = await requestJson('/api/setup/discover');
+    const output = document.querySelector('#discoveries');
+    if (!televisions.length) {
+      output.textContent = 'No TVs found automatically. Enter the TV IP address below.';
+    } else {
+      output.textContent = televisions.map(tv => `${tv.name} (${tv.model}) — ${tv.host}`).join('\n');
+      document.querySelector('#tv-host').value = televisions[0].host;
+    }
+    message.textContent = '';
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    event.currentTarget.disabled = false;
+  }
+});
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  submit.disabled = true;
+  message.textContent = 'Look at the TV and accept the pairing prompt…';
+  const payload = {
+    fal_key: document.querySelector('#fal-key').value,
+    room_name: document.querySelector('#room').value,
+    tv_host: document.querySelector('#tv-host').value,
+    tv_port: 8002,
+    aliases: document.querySelector('#aliases').value.split(',').map(value => value.trim()).filter(Boolean),
+    test_prompt: document.querySelector('#prompt').value
+  };
+  try {
+    const setup = await requestJson('/api/setup/configure', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    });
+    form.classList.add('hidden');
+    document.querySelector('#result').classList.remove('hidden');
+    document.querySelector('#secret').textContent = setup.api_key;
+    message.textContent = 'TV paired. Queuing your test image…';
+    const job = await requestJson('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'Authorization': `Bearer ${setup.api_key}`},
+      body: JSON.stringify({description: setup.test_prompt, room: setup.room})
+    });
+    await pollJob(job.job_id, setup.api_key);
+  } catch (error) {
+    message.textContent = error.message;
+    submit.disabled = false;
+  }
+});
+
+async function pollJob(jobId, apiKey) {
+  for (;;) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const job = await requestJson(`/api/jobs/${jobId}`, {
+      headers: {'Authorization': `Bearer ${apiKey}`}
+    });
+    message.textContent = job.message;
+    if (job.status === 'completed' || job.status === 'failed') return;
+  }
+}
+
+showCurrentState().catch(error => { message.textContent = error.message; });
+</script>
+</body>
+</html>

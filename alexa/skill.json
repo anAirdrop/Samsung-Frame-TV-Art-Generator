@@ -6,24 +6,31 @@
         {
           "name": "GenerateArtIntent",
           "samples": [
-            "make an image of {imageDescription} for the {roomName} TV",
-            "generate {imageDescription} for the {roomName}",
-            "create art of {imageDescription} for {roomName} TV",
-            "put {imageDescription} on the {roomName} TV",
-            "show {imageDescription} on {roomName}",
-            "display {imageDescription} in the {roomName}",
-            "paint {imageDescription} for the {roomName} TV",
-            "make {imageDescription} for {roomName}",
-            "create {imageDescription} for the {roomName} TV",
-            "generate an image of {imageDescription} for {roomName}",
-            "set {imageDescription} on the {roomName} TV",
-            "draw {imageDescription} for the {roomName}"
+            "make an image of {imageDescription}",
+            "generate an image of {imageDescription}",
+            "create art of {imageDescription}",
+            "create an image of {imageDescription}",
+            "paint {imageDescription}",
+            "draw {imageDescription}"
           ],
           "slots": [
             {
               "name": "imageDescription",
               "type": "AMAZON.SearchQuery"
-            },
+            }
+          ]
+        },
+        {
+          "name": "SelectRoomIntent",
+          "samples": [
+            "for the {roomName} TV",
+            "use the {roomName} TV",
+            "show it in the {roomName}",
+            "put it in the {roomName}",
+            "display it on the {roomName} TV",
+            "the {roomName}"
+          ],
+          "slots": [
             {
               "name": "roomName",
               "type": "ROOM_LIST"

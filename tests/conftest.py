@@ -1,6 +1,9 @@
 """Shared test fixtures."""
 
+from io import BytesIO
+
 import pytest
+from PIL import Image
 
 from frame_art.config import AppConfig, FalConfig, ImageConfig, OutputConfig, TVConfig
 
@@ -19,7 +22,12 @@ def sample_config():
                     "limit_generations": True,
                 },
             ),
-            output=OutputConfig(width=3840, height=2160, format="JPEG", jpeg_quality=85),
+            output=OutputConfig(
+                width=3840,
+                height=2160,
+                format="JPEG",
+                jpeg_quality=85,
+            ),
         ),
         prompt_prefix="Art: ",
         prompt_suffix=" HD.",
@@ -45,9 +53,6 @@ def sample_config():
 @pytest.fixture
 def sample_image_bytes():
     """Create a minimal valid PNG image (1x1 red pixel)."""
-    from PIL import Image
-    from io import BytesIO
-
     img = Image.new("RGB", (100, 60), color=(255, 0, 0))
     buf = BytesIO()
     img.save(buf, format="PNG")

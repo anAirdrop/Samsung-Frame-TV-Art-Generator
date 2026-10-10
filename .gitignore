@@ -24,6 +24,7 @@ env/
 
 # Config (contains user-specific settings)
 config.yaml
+data/
 
 # TV pairing tokens (sensitive)
 tokens/

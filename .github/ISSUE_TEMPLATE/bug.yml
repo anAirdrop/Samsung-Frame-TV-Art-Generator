@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible setup, generation, or TV compatibility problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: checkboxes
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed API keys, bearer tokens, tunnel tokens, TV tokens, and private notification topics.
+          required: true
+  - type: dropdown
+    attributes:
+      label: Area
+      options: [Setup, Siri, Alexa, fal.ai, TV pairing, TV upload, Docker, Other]
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Samsung model code and model year
+      placeholder: QN55LS03DAFXZA, 2024
+  - type: input
+    attributes:
+      label: Frame Art version or container tag
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include exact steps, expected behavior, and sanitized logs.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Deployment details
+      placeholder: Raspberry Pi model, OS, architecture, Docker version, and network layout
+    validations:
+      required: true

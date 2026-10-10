@@ -16,12 +16,17 @@ from frame_art.services.image_generator import (
 def test_extract_image_url() -> None:
     result = {"images": [{"url": "https://example.com/image.jpg"}]}
 
-    assert extract_image_url(result, "fal-ai/nano-banana-2") == result["images"][0]["url"]
+    assert extract_image_url(result, "fal-ai/nano-banana-2") == (
+        result["images"][0]["url"]
+    )
 
 
 def test_extract_image_url_rejects_incompatible_response() -> None:
     with pytest.raises(FalResponseError, match="incompatible response"):
-        extract_image_url({"image": {"url": "https://example.com/image.jpg"}}, "other/model")
+        extract_image_url(
+            {"image": {"url": "https://example.com/image.jpg"}},
+            "other/model",
+        )
 
 
 def test_extract_image_url_rejects_empty_images() -> None:
@@ -35,8 +40,7 @@ async def test_generate_image_requires_fal_key() -> None:
         await generate_image(
             description="a sunset",
             config=AppConfig(),
-            settings=Settings(),
-            model_override=None,
+            settings=Settings(fal_key=""),
         )
 
 
@@ -54,7 +58,6 @@ async def test_generate_image_uses_configured_model() -> None:
             description="a sunset",
             config=config,
             settings=Settings(fal_key="fal-test"),
-            model_override=None,
         )
 
     assert result == b"image"
@@ -64,7 +67,7 @@ async def test_generate_image_uses_configured_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_image_accepts_model_override() -> None:
+async def test_generate_image_initializes_configured_model() -> None:
     config = AppConfig()
 
     with patch.object(
@@ -80,9 +83,8 @@ async def test_generate_image_accepts_model_override() -> None:
             description="a mountain",
             config=config,
             settings=Settings(fal_key="fal-test"),
-            model_override="fal-ai/flux/krea",
         )
 
     initialize.assert_called_once_with(
-        api_key="fal-test", model="fal-ai/flux/krea"
+        api_key="fal-test", model="fal-ai/nano-banana-2"
     )

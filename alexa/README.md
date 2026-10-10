@@ -1,89 +1,78 @@
 # Alexa Skill Setup
 
-This guide walks you through setting up the "Frame Art" Alexa skill to generate AI art for your Samsung Frame TV.
+Alexa runs in Amazon's cloud, so it needs a public HTTPS route to the Frame Art agent. Requests are verified using Alexa's request-signing certificates; generation is placed into the same durable queue used by Siri.
 
-## Prerequisites
+## 1. Complete local setup
 
-- An [Amazon Developer account](https://developer.amazon.com/)
-- Your Frame TV Art Generator server running and accessible from the internet (see [Exposing Your Server](#exposing-your-server))
+Install Frame Art, open `http://<your-pi-ip>:8000`, pair the TV, and confirm that the first test image appears.
 
-## Step 1: Create the Skill
+## 2. Create a stable HTTPS endpoint
 
-1. Go to the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask)
-2. Click **Create Skill**
-3. Skill name: `Frame Art`
-4. Choose **Custom** model
-5. Choose **Provision your own** for backend
-6. Click **Create Skill**
-7. Choose **Start from Scratch** template
+The recommended option is a named Cloudflare Tunnel:
 
-## Step 2: Set Up the Interaction Model
-
-1. In the left sidebar, click **Interaction Model** > **JSON Editor**
-2. Paste the contents of `skill.json` from this directory
-3. Customize the `ROOM_LIST` slot type to match your actual rooms/TVs
-4. Click **Save Model**
-5. Click **Build Model** (takes ~30 seconds)
-
-## Step 3: Configure the Endpoint
-
-1. In the left sidebar, click **Endpoint**
-2. Select **HTTPS**
-3. In the **Default Region** field, enter: `https://your-domain.com/api/alexa`
-4. For the SSL certificate type, select:
-   - **"My development endpoint has a certificate from a trusted certificate authority"** if you're using Let's Encrypt, Cloudflare, etc.
-   - **"My development endpoint is a sub-domain of a domain that has a wildcard certificate"** if applicable
-5. Click **Save Endpoints**
-
-## Step 4: Test the Skill
-
-1. Click **Test** in the top navigation
-2. Enable testing in **Development** mode
-3. Type or say: `ask frame art to make an image of a sunset for the living room TV`
-4. Verify you get a response like: "Got it! I'm generating a sunset for your living room TV..."
-
-## Usage
-
-Once configured, you can use the skill like this:
-
-- "Alexa, tell frame art to make an image of a mountain landscape for the living room TV"
-- "Alexa, ask frame art to create a sunset over the ocean for the bedroom TV"
-- "Alexa, tell frame art to put a Van Gogh style painting on the bedroom TV"
-
-## Notes
-
-- **No need to publish**: For personal use, keep the skill in "Development" mode. It will work on all Alexa devices linked to your Amazon developer account.
-- **8-second timeout**: Alexa has an 8-second response timeout. Since image generation can take 10-15 seconds, the skill responds immediately with "I'm working on it" and sends a push notification (via ntfy.sh) when the image is ready.
-- **Room customization**: Edit the `ROOM_LIST` values in `skill.json` to match your actual TV locations. Remember to rebuild the model after changes.
-
-## Exposing Your Server
-
-Your server needs to be reachable from Amazon's cloud. Recommended options:
-
-### Cloudflare Tunnel (Recommended, Free)
+1. In Cloudflare Zero Trust, create a tunnel and copy its token.
+2. Add the token to `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
+3. Give the tunnel a public hostname and point its service to `http://localhost:8000`.
+4. Start the optional Compose profile:
 
 ```bash
-# Install cloudflared
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-chmod +x cloudflared
-
-# Create tunnel
-./cloudflared tunnel login
-./cloudflared tunnel create frame-art
-./cloudflared tunnel route dns frame-art frame-art.yourdomain.com
-./cloudflared tunnel run --url http://localhost:8000 frame-art
+docker compose --profile tunnel up -d
 ```
 
-### Tailscale Funnel (If you use Tailscale)
+Confirm that `https://your-hostname.example/healthz` returns `{"status":"ok"}`. Keep port 8000 closed on your router; Cloudflare Tunnel makes an outbound connection and does not require port forwarding.
+
+## 3. Create the skill
+
+1. Open the [Alexa Developer Console](https://developer.amazon.com/alexa/console/ask).
+2. Select **Create Skill**.
+3. Name it **Frame Art**.
+4. Choose **Custom**, **Provision your own**, and **Start from Scratch**.
+5. Under **Interaction Model → JSON Editor**, paste `alexa/skill.json` from this repository.
+6. Edit the `ROOM_LIST` values and synonyms to match the rooms in `data/config.yaml`.
+7. Select **Save Model**, then **Build Model**.
+
+Copy the Skill ID shown in the console (it starts with `amzn1.ask.skill.`), add
+it to the agent's secrets file, and restart the service:
 
 ```bash
-tailscale funnel 8000
+nano data/.env
+# Set ALEXA_SKILL_ID=amzn1.ask.skill.YOUR-SKILL-ID, save, and exit.
+docker compose restart frame-art
 ```
 
-### Caddy Reverse Proxy (If you have a static IP)
+Frame Art rejects Alexa traffic until this ID is configured, and the Alexa SDK
+then verifies that signed requests belong to your specific skill.
 
-```
-frame-art.yourdomain.com {
-    reverse_proxy localhost:8000
-}
-```
+The interaction is intentionally two turns. Alexa's `AMAZON.SearchQuery` phrase slot cannot appear in the same sample utterance as the room slot.
+
+## 4. Configure the endpoint
+
+1. Open **Endpoint** and select **HTTPS**.
+2. Set **Default Region** to `https://your-hostname.example/api/alexa`.
+3. Select **My development endpoint has a certificate from a trusted certificate authority**.
+4. Save the endpoint.
+
+## 5. Test
+
+Enable **Development** testing and say:
+
+> “Alexa, ask Frame Art to make an image of a mountain lake at sunrise.”
+
+Alexa asks which room. Reply:
+
+> “The living room.”
+
+Alexa confirms that the request is queued. The durable worker continues after the voice session ends and recovers queued work after a service restart.
+
+## Personal use and publishing
+
+A development skill works for Alexa devices linked to the Amazon developer account and does not need certification. Making one shared public skill for unrelated installations requires account linking and a hosted relay that can route each account to its home agent. This repository deliberately keeps the first release self-hosted and does not operate such a relay.
+
+## Troubleshooting
+
+- **Skill build rejects phrase slots:** Re-paste the current `alexa/skill.json`; no sample should contain both `imageDescription` and `roomName`.
+- **Endpoint unavailable:** Verify the tunnel container and public `/healthz` URL.
+- **Unknown room:** Keep `ROOM_LIST` aligned with `data/config.yaml`.
+- **Alexa confirms but no image appears:** Check `docker compose logs frame-art` and the authenticated `/api/jobs` status when available.
+- **Signature verification fails:** Confirm the endpoint is exactly `/api/alexa` and that no proxy rewrites the Alexa signature headers.
+- **Alexa is not configured:** Check `ALEXA_SKILL_ID` in `data/.env`, then restart the container.

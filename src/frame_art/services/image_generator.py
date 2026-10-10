@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 import fal_client
 import httpx
@@ -13,7 +14,8 @@ from ..config import AppConfig, FalArgument, Settings
 
 logger = logging.getLogger(__name__)
 
-_MAX_ATTEMPTS = 3
+_MAX_DOWNLOAD_ATTEMPTS = 3
+_MAX_IMAGE_BYTES = 40 * 1024 * 1024
 
 
 class FalImage(BaseModel):
@@ -28,19 +30,33 @@ class FalResponseError(RuntimeError):
     """Raised when a fal.ai model returns an incompatible response."""
 
 
+class FalDownloadError(RuntimeError):
+    """Raised when a generated image cannot be downloaded safely."""
+
+
+def _response_shape(result: object) -> str:
+    if isinstance(result, dict):
+        return f"object keys={sorted(str(key) for key in result)}"
+    return type(result).__name__
+
+
+def _safe_url(url: str) -> str:
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
 def extract_image_url(result: object, model: str) -> str:
     """Validate a fal.ai text-to-image response and return its first URL."""
     try:
         parsed = FalImageResult.model_validate(result)
     except ValidationError as error:
         raise FalResponseError(
-            f"fal.ai model '{model}' returned an incompatible response: {result!r}"
+            f"fal.ai model '{model}' returned an incompatible response "
+            f"({_response_shape(result)}); expected images[].url"
         ) from error
 
     if not parsed.images:
-        raise FalResponseError(
-            f"fal.ai model '{model}' returned no images: {result!r}"
-        )
+        raise FalResponseError(f"fal.ai model '{model}' returned no images")
 
     return parsed.images[0].url
 
@@ -48,13 +64,30 @@ def extract_image_url(result: object, model: str) -> str:
 async def download_image(url: str, model: str) -> bytes:
     """Download a generated image with bounded retries."""
     last_error: httpx.HTTPError | None = None
+    safe_url = _safe_url(url)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
+        for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
             try:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.content
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+                    if not content_type.lower().startswith("image/"):
+                        raise FalResponseError(
+                            f"fal.ai model '{model}' returned non-image content "
+                            f"from '{safe_url}': {content_type or 'unknown'}"
+                        )
+                    chunks: list[bytes] = []
+                    total_bytes = 0
+                    async for chunk in response.aiter_bytes():
+                        total_bytes += len(chunk)
+                        if total_bytes > _MAX_IMAGE_BYTES:
+                            raise FalResponseError(
+                                f"fal.ai model '{model}' returned an image larger "
+                                f"than {_MAX_IMAGE_BYTES} bytes"
+                            )
+                        chunks.append(chunk)
+                    return b"".join(chunks)
             except httpx.HTTPError as error:
                 last_error = error
                 logger.warning(
@@ -62,18 +95,33 @@ async def download_image(url: str, model: str) -> bytes:
                     extra={
                         "attempt": attempt,
                         "model": model,
-                        "url": url,
-                        "error": str(error),
+                        "url": safe_url,
+                        "error_type": type(error).__name__,
+                        "status_code": (
+                            error.response.status_code
+                            if isinstance(error, httpx.HTTPStatusError)
+                            else None
+                        ),
                     },
                 )
-                if attempt < _MAX_ATTEMPTS:
+                if attempt < _MAX_DOWNLOAD_ATTEMPTS:
                     await asyncio.sleep(2 ** (attempt - 1))
 
     if last_error is None:
-        raise RuntimeError(
-            f"fal.ai image download failed without an HTTP error: model={model}, url={url}"
+        raise FalDownloadError(
+            "fal.ai image download failed without an HTTP error: "
+            f"model={model}, url={safe_url}"
         )
-    raise last_error
+    status_code = (
+        last_error.response.status_code
+        if isinstance(last_error, httpx.HTTPStatusError)
+        else None
+    )
+    raise FalDownloadError(
+        f"fal.ai image download failed after {_MAX_DOWNLOAD_ATTEMPTS} attempts: "
+        f"model={model}, url={safe_url}, error_type={type(last_error).__name__}, "
+        f"status_code={status_code}"
+    ) from last_error
 
 
 class FalProvider:
@@ -90,58 +138,25 @@ class FalProvider:
             **configured_arguments,
             "prompt": prompt,
         }
-        result = await self._subscribe(arguments)
+        result = await self.client.subscribe(
+            self.model,
+            arguments=arguments,
+            client_timeout=180.0,
+        )
         image_url = extract_image_url(result, self.model)
         return await download_image(image_url, self.model)
-
-    async def _subscribe(
-        self, arguments: dict[str, FalArgument]
-    ) -> object:
-        last_error: fal_client.FalClientError | None = None
-
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
-            try:
-                logger.info(
-                    "Generating image with fal.ai",
-                    extra={"attempt": attempt, "model": self.model},
-                )
-                return await self.client.subscribe(
-                    self.model,
-                    arguments=arguments,
-                    client_timeout=120.0,
-                )
-            except fal_client.FalClientError as error:
-                last_error = error
-                logger.warning(
-                    "fal.ai generation request failed",
-                    extra={
-                        "attempt": attempt,
-                        "model": self.model,
-                        "error": str(error),
-                    },
-                )
-                if attempt < _MAX_ATTEMPTS:
-                    await asyncio.sleep(2 ** (attempt - 1))
-
-        if last_error is None:
-            raise RuntimeError(
-                f"fal.ai generation failed without a client error: model={self.model}"
-            )
-        raise last_error
 
 
 async def generate_image(
     description: str,
     config: AppConfig,
     settings: Settings,
-    model_override: str | None,
 ) -> bytes:
-    """Generate an image using the configured or request-specific fal.ai model."""
+    """Generate an image using the configured fal.ai model."""
     if not settings.fal_key:
         raise ValueError("FAL_KEY is required for image generation")
 
     fal_config = config.image.fal
-    model = model_override or fal_config.model
     full_prompt = f"{config.prompt_prefix}{description}{config.prompt_suffix}"
-    provider = FalProvider(api_key=settings.fal_key, model=model)
+    provider = FalProvider(api_key=settings.fal_key, model=fal_config.model)
     return await provider.generate(full_prompt, fal_config.arguments)

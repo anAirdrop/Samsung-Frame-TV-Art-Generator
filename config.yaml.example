@@ -36,7 +36,7 @@ tvs:
   living_room:
     host: "192.168.1.100"
     port: 8002
-    token_file: "tokens/living_room_token.txt"
+    token_file: "/data/tokens/living_room_token.txt"
     aliases:
       - "living room"
       - "lounge"
@@ -46,7 +46,7 @@ tvs:
   bedroom:
     host: "192.168.1.101"
     port: 8002
-    token_file: "tokens/bedroom_token.txt"
+    token_file: "/data/tokens/bedroom_token.txt"
     aliases:
       - "bedroom"
       - "master bedroom"

@@ -1,102 +1,82 @@
-"""Unified webhook endpoint for Siri Shortcuts and direct API use."""
+"""Authenticated queued-generation API for Siri and direct integrations."""
 
 from __future__ import annotations
 
 import asyncio
-import logging
-import time
+from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..config import Settings, load_config, resolve_room
-from ..models import GenerateRequest, GenerateResponse
-from ..services.image_generator import generate_image
-from ..services.image_processor import process_image
-from ..services.notifier import Notifier, notify_failure, notify_success
-from ..services.tv_controller import TVController
+from ..models import GenerateRequest, JobAcceptedResponse, JobStatusResponse
+from ..security import require_api_token
+from ..storage import JobStore
 
-router = APIRouter()
-logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api")
 
 
-@router.post("/api/generate", response_model=GenerateResponse)
+@router.post(
+    "/generate",
+    response_model=JobAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def generate_art(
-    request: GenerateRequest, background_tasks: BackgroundTasks
-) -> GenerateResponse:
-    """Generate an AI image and display it on a Samsung Frame TV.
-
-    This endpoint is used by Siri Shortcuts and direct HTTP calls.
-    """
-    settings = Settings()
-
-    # Authenticate
-    if request.api_key != settings.webhook_api_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    config = load_config()
-
-    # Resolve room name to TV config
-    tv_key = resolve_room(request.room, config.tvs)
-    if not tv_key:
-        known = list(config.tvs.keys())
+    payload: GenerateRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(require_api_token)],
+) -> JobAcceptedResponse:
+    """Queue image generation and return immediately for voice assistants."""
+    config = load_config(settings.config_path)
+    tv_key = resolve_room(payload.room, config.tvs)
+    if tv_key is None:
+        known_rooms = [key.replace("_", " ") for key in config.tvs]
         raise HTTPException(
-            status_code=422,
-            detail=f"Unknown room '{request.room}'. Known TVs: {known}",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"message": "Unknown room", "known_rooms": known_rooms},
         )
 
-    tv_config = config.tvs[tv_key]
-    tv_display_name = tv_key.replace("_", " ").title()
-    start = time.time()
+    identity = request.client.host if request.client is not None else "unknown"
+    request.app.state.rate_limiter.check(
+        identity, settings.generation_rate_limit_per_hour
+    )
+    store: JobStore = request.app.state.job_store
+    job = await asyncio.to_thread(
+        store.enqueue,
+        payload.description.strip(),
+        tv_key,
+        "api",
+    )
+    return JobAcceptedResponse(
+        job_id=job.id,
+        status=job.status,
+        message=(
+            f"Creating art for the {tv_key.replace('_', ' ')} TV. "
+            "You can close this shortcut."
+        ),
+    )
 
-    # Set up notifier
-    notifier = Notifier(settings.ntfy_server, settings.ntfy_topic)
 
-    try:
-        # Step 1: Generate image with the configured fal.ai model
-        model = request.model or config.image.fal.model
-        raw_image = await generate_image(
-            description=request.description,
-            config=config,
-            settings=settings,
-            model_override=request.model,
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job(
+    job_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(require_api_token)],
+) -> JobStatusResponse:
+    """Return durable status for a previously accepted generation job."""
+    del settings
+    store: JobStore = request.app.state.job_store
+    job = await asyncio.to_thread(store.get, job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Generation job not found",
         )
-        logger.info(
-            "Image generated (%d bytes) with fal.ai model '%s'",
-            len(raw_image),
-            model,
-        )
-
-        # Step 2: Resize to TV resolution
-        processed = process_image(raw_image, config.image.output)
-        logger.info("Image processed to %dx%d (%d bytes)",
-                     config.image.output.width, config.image.output.height,
-                     len(processed))
-
-        # Step 3: Upload to Samsung TV (sync library, run in thread)
-        controller = TVController(tv_config)
-        content_id = await asyncio.to_thread(
-            controller.upload_and_display,
-            processed,
-            file_type=config.image.output.format,
-        )
-        logger.info("Art set on %s TV (content_id=%s)", tv_display_name, content_id)
-
-        duration = round(time.time() - start, 1)
-
-        # Step 4: Send success notification (non-blocking)
-        background_tasks.add_task(
-            notify_success, notifier, request.description, tv_display_name
-        )
-
-        return GenerateResponse(
-            status="success",
-            message=f"Image set on {tv_display_name} TV",
-            image_description=request.description,
-            tv=tv_key,
-            duration_seconds=duration,
-        )
-
-    except Exception as e:
-        logger.exception("Failed to generate/upload art")
-        background_tasks.add_task(notify_failure, notifier, str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    return JobStatusResponse(
+        job_id=job.id,
+        status=job.status,
+        message=job.message,
+        description=job.description,
+        room=job.tv_key.replace("_", " "),
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )

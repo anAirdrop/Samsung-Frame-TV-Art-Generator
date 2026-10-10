@@ -2,7 +2,8 @@
 """One-time Samsung Frame TV pairing script.
 
 Usage:
-    python scripts/pair_tv.py --host 192.168.1.100 --token-file tokens/living_room_token.txt
+    python scripts/pair_tv.py --host 192.168.1.100 \
+        --token-file tokens/living_room_token.txt
 
 The TV will display a pairing popup on screen. Accept it with your TV remote
 within 30 seconds. The pairing token is saved to the token file for future use.
@@ -38,7 +39,7 @@ def main() -> None:
     try:
         info = pair_tv(args.host, args.port, args.token_file)
         device = info.get("device", {})
-        print(f"Paired successfully!")
+        print("Paired successfully!")
         print(f"  TV Name:  {device.get('name', 'Unknown')}")
         print(f"  Model:    {device.get('modelName', 'Unknown')}")
         print(f"  Token:    saved to {args.token_file}")

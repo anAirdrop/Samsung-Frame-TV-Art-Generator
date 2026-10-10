@@ -1,215 +1,159 @@
-# Samsung Frame TV Art Generator
+# Frame Art
 
-Generate AI art with your voice and display it on Samsung Frame TVs. Speak a command to **Amazon Alexa** or **Apple Siri/HomePod**, and the system generates an image using AI and sets it as your TV's art.
+Create AI artwork with your voice and display it in Art Mode on a Samsung Frame TV.
 
-**"Alexa, tell Frame Art to make an image of a Japanese garden at sunset for the living room TV."**
+Frame Art runs on a Raspberry Pi, NAS, or other always-on Docker host on the same network as the TV. Siri Shortcuts and Alexa submit a description, fal.ai generates a 16:9 image, and the local agent prepares and uploads it to the TV.
 
-## Features
+> Samsung's private Art Mode API varies by model year and firmware. Please report successful and unsuccessful models so the compatibility matrix can grow from verified results.
 
-- **Voice Control** — Works with both Amazon Alexa and Apple Siri/HomePod
-- **Configurable fal.ai Models** — Use one fal.ai API key and select the text-to-image model in configuration
-- **Multiple TVs** — Support any number of Samsung Frame TVs across different rooms
-- **Push Notifications** — Get notified on your phone when the art is ready (via [ntfy.sh](https://ntfy.sh))
-- **Self-Hosted** — Runs on your own hardware (Raspberry Pi, NAS, home server, etc.)
-- **Docker Ready** — Single `docker compose up` to deploy
-- **Simple REST API** — Easy to integrate with any automation system (Home Assistant, IFTTT, etc.)
+## What you need
 
-## How It Works
-
-```
-Voice Command → Alexa/Siri → Webhook → AI Image Generation → Resize to 4K → Upload to Samsung TV → Notification
-```
-
-1. You speak a command to Alexa or Siri
-2. The voice assistant sends the request to your self-hosted server
-3. The server generates an image using your selected fal.ai model
-4. The image is resized to 3840x2160 (native Frame TV resolution)
-5. The image is uploaded to your Samsung Frame TV via WebSocket
-6. You get a push notification confirming it's done
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.11+ or Docker
-- A Samsung Frame TV (2019 or newer) on your local network
+- A Samsung Frame TV with local Art Mode API support
+- An always-on Linux Docker host on the same LAN as the TV
 - A [fal.ai API key](https://fal.ai/dashboard/keys)
+- Siri, Alexa, or the authenticated HTTP API
 
-### 1. Clone and Configure
+The default generator is `fal-ai/nano-banana-2` at 4K, 16:9, with JPEG output.
 
-```bash
-git clone https://github.com/anairdrop/samsung-frame-tv-art-generator.git
-cd samsung-frame-tv-art-generator
-
-# Copy example configs
-cp .env.example .env
-cp config.yaml.example config.yaml
-```
-
-Edit `.env` with your API keys:
-```bash
-FAL_KEY=your-fal-key-here
-WEBHOOK_API_KEY=your-random-secret      # Shared secret for Siri Shortcuts
-```
-
-Edit `config.yaml` with your TV details:
-```yaml
-image:
-  fal:
-    model: "fal-ai/nano-banana-2"
-    arguments:
-      aspect_ratio: "16:9"
-      resolution: "4K"
-      num_images: 1
-      output_format: "jpeg"
-      limit_generations: true
-
-tvs:
-  living_room:
-    host: "192.168.1.100"               # Your TV's IP address
-    aliases: ["living room", "lounge"]
-  bedroom:
-    host: "192.168.1.101"
-    aliases: ["bedroom"]
-```
-
-### 2. Pair Your TVs
-
-Each TV needs a one-time pairing. The TV will show a popup — accept it with your remote.
+## Install on a Raspberry Pi or Linux server
 
 ```bash
-# Install dependencies first
-pip install -r requirements.txt
-
-# Pair each TV
-PYTHONPATH=src python scripts/pair_tv.py --host 192.168.1.100 --token-file tokens/living_room_token.txt
-PYTHONPATH=src python scripts/pair_tv.py --host 192.168.1.101 --token-file tokens/bedroom_token.txt
-```
-
-### 3. Start the Server
-
-**With Docker (recommended):**
-```bash
+mkdir frame-art
+cd frame-art
+curl -O https://raw.githubusercontent.com/anAirdrop/Samsung-Frame-TV-Art-Generator/main/docker-compose.yml
+mkdir data
 docker compose up -d
 ```
 
-**Without Docker:**
+The published container supports both `linux/arm64` and `linux/amd64`.
+
+Open `http://<your-pi-ip>:8000` on a device on your home network. The setup page can search for the TV or accept its IP address manually. It will:
+
+1. Ask you to accept Samsung's pairing prompt on the TV.
+2. Store the TV token under `./data/tokens`.
+3. Store your fal.ai key locally under `./data/.env`.
+4. Generate a random API bearer token.
+5. Queue a first test image.
+
+The container restarts automatically after a Pi reboot. All durable state is under `./data`, including configuration, pairing tokens, jobs, and IDs of artwork managed by Frame Art.
+
+## Voice assistants
+
+### Siri and HomePod
+
+Siri uses an Apple Shortcut and the authenticated generation API. Follow [the Siri setup guide](shortcuts/README.md).
+
+### Alexa
+
+Alexa requires a custom skill and a public HTTPS endpoint because Alexa runs in Amazon's cloud. Follow [the Alexa setup guide](alexa/README.md).
+
+Alexa is currently the advanced setup path. A single consumer-facing Alexa skill would require a separately operated hosted relay and account-linking service; the open-source agent does not send credentials through a project-owned service.
+
+## Optional Cloudflare Tunnel
+
+Create a named tunnel in Cloudflare Zero Trust and copy its token. Set the token in a local `.env` file:
+
 ```bash
-PYTHONPATH=src uvicorn frame_art.main:app --host 0.0.0.0 --port 8000
+cp .env.example .env
+# Edit CLOUDFLARE_TUNNEL_TOKEN in .env
+docker compose --profile tunnel up -d
 ```
 
-### 4. Test It
+Configure the tunnel's public hostname to forward to `http://localhost:8000`, then use `https://your-hostname.example/api/alexa` for Alexa and `https://your-hostname.example/api/generate` for remote Siri use.
+
+Do not expose port 8000 directly through router port forwarding. Initial setup only accepts local clients and disables itself after configuration. API documentation is disabled by default.
+
+## API
+
+Frame Art accepts bearer authentication instead of credentials in request bodies.
 
 ```bash
 curl -X POST http://localhost:8000/api/generate \
+  -H "Authorization: Bearer YOUR_FRAME_ART_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "description": "a serene mountain landscape at golden hour",
-    "room": "living room",
-    "api_key": "your-webhook-api-key"
+    "room": "living room"
   }'
 ```
 
-### 5. Set Up Voice Assistants
-
-- **Alexa**: See [alexa/README.md](alexa/README.md) for Alexa skill setup
-- **Siri/HomePod**: See [shortcuts/README.md](shortcuts/README.md) for Apple Shortcuts setup
-
-## API Reference
-
-### `POST /api/generate`
-
-Generate an image and display it on a TV.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `description` | string | Yes | Image description (what to generate) |
-| `room` | string | Yes | Room name matching a TV alias in config |
-| `api_key` | string | Yes | Your `WEBHOOK_API_KEY` |
-| `model` | string | No | Override the configured fal.ai model endpoint |
-
-**Response:**
-```json
-{
-  "status": "success",
-  "message": "Image set on Living Room TV",
-  "image_description": "a serene mountain landscape at golden hour",
-  "tv": "living_room",
-  "duration_seconds": 12.4
-}
-```
-
-### `POST /api/alexa`
-
-Alexa skill endpoint (handles ASK SDK request format). See [alexa/README.md](alexa/README.md).
-
-### `GET /api/health`
-
-Health check with TV reachability status.
+The server immediately returns `202 Accepted`:
 
 ```json
 {
-  "status": "ok",
-  "model": "fal-ai/nano-banana-2",
-  "tvs": {
-    "living_room": "reachable",
-    "bedroom": "unreachable"
-  }
+  "job_id": "9e9225c2-7c33-47a4-b72a-870c21130bf7",
+  "status": "queued",
+  "message": "Creating art for the living room TV. You can close this shortcut."
 }
 ```
 
-## Notifications
+Check durable status with:
 
-The server sends push notifications via [ntfy.sh](https://ntfy.sh) when an image is generated (or if it fails).
+```bash
+curl -H "Authorization: Bearer YOUR_FRAME_ART_API_KEY" \
+  http://localhost:8000/api/jobs/JOB_ID
+```
 
-1. Install the ntfy app on your phone ([iOS](https://apps.apple.com/us/app/ntfy/id1625396347) / [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy))
-2. Subscribe to your topic (default: `frame-tv-art`, set in `.env`)
-3. You'll get a notification every time art is updated on your TV
+Other routes:
 
-## Exposing Your Server
+| Route | Authentication | Purpose |
+|---|---|---|
+| `GET /healthz` | None | Container liveness only |
+| `GET /api/status` | Bearer token | Model and TV reachability |
+| `POST /api/alexa` | Alexa request signatures | Custom skill endpoint |
 
-For Alexa and Siri to reach your server, it needs to be accessible from the internet. See [alexa/README.md](alexa/README.md#exposing-your-server) for options (Cloudflare Tunnel, Tailscale Funnel, etc.).
+Generation is rate-limited per source address. Jobs survive service restarts. Frame Art records content IDs that it uploads and retains the newest 20 per TV by default; it never deletes artwork it did not create.
 
 ## Configuration
 
-### Environment Variables (`.env`)
+The setup page writes `data/config.yaml`. Advanced users may edit it while the service is stopped:
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `FAL_KEY` | Yes | — | fal.ai API key |
-| `WEBHOOK_API_KEY` | Yes | — | Shared secret for webhook auth |
-| `NTFY_TOPIC` | No | `frame-tv-art` | ntfy.sh notification topic |
-| `NTFY_SERVER` | No | `https://ntfy.sh` | ntfy server URL |
-| `HOST` | No | `0.0.0.0` | Server bind address |
-| `PORT` | No | `8000` | Server port |
-| `LOG_LEVEL` | No | `info` | Logging level |
+```yaml
+image:
+  fal:
+    model: fal-ai/nano-banana-2
+    arguments:
+      aspect_ratio: "16:9"
+      resolution: 4K
+      num_images: 1
+      output_format: jpeg
+      limit_generations: true
+  output:
+    width: 3840
+    height: 2160
+    format: JPEG
+    jpeg_quality: 95
+tvs:
+  living_room:
+    host: 192.168.1.100
+    port: 8002
+    token_file: /data/tokens/living_room_token.txt
+    aliases: [living room, lounge]
+    matte: none
+```
 
-### Application Config (`config.yaml`)
+Optional Compose settings are documented in `.env.example`. Notifications are disabled by default. If enabling ntfy, use a private, unguessable topic or an authenticated self-hosted server; prompts and errors are included in notifications.
 
-See [config.yaml.example](config.yaml.example) for all options with inline documentation.
+## Updating and backup
 
-### Choosing a fal.ai Model
+```bash
+docker compose pull
+docker compose up -d
+```
 
-1. Open the model's API page in the [fal.ai model gallery](https://fal.ai/models).
-2. Copy its endpoint ID, such as `fal-ai/nano-banana-2`.
-3. Set that value at `image.fal.model` in `config.yaml`.
-4. Copy any supported model inputs into `image.fal.arguments`. The application
-   always supplies `prompt`, so do not add a second prompt there.
+Back up the `data` directory. It contains secrets and must not be published or committed.
 
-The selected endpoint must be a text-to-image model that returns an `images`
-list containing image URLs. You can temporarily override the configured model
-with the optional `model` field on `POST /api/generate`; configured arguments
-are still sent to the override model, so they must be compatible with it.
+## Development
 
-## Troubleshooting
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
+```
 
-| Problem | Solution |
-|---|---|
-| TV not found / unreachable | Ensure TV is powered on, in Art Mode, and on the same network. Run `python scripts/test_tv_connection.py` |
-| Pairing failed | Make sure you accept the popup on the TV within 30 seconds |
-| Image generation failed | Check `FAL_KEY`, the model ID, and the arguments supported by that model's fal.ai API page |
-| Alexa skill not responding | Verify your server is accessible from the internet and the endpoint URL is correct |
-| Siri shortcut fails | Check the webhook URL and API key in the shortcut settings |
+See [CONTRIBUTING.md](CONTRIBUTING.md) for compatibility reports and pull requests. Security problems should be reported privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

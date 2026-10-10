@@ -1,17 +1,23 @@
 services:
   frame-art:
-    build: .
-    # network_mode: host is REQUIRED for Samsung TV WebSocket communication.
-    # The TV must be reachable on the local network via its IP address.
-    # Docker bridge networking will NOT work for this.
+    image: ghcr.io/anairdrop/samsung-frame-tv-art-generator:latest
     network_mode: host
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./.env:/app/.env:ro
-      - tv-tokens:/data/tokens
+      - ./data:/data
     restart: unless-stopped
     environment:
-      - PYTHONPATH=/app/src
+      FRAME_ART_DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAX_ARTWORKS_PER_TV: ${MAX_ARTWORKS_PER_TV:-20}
+      GENERATION_RATE_LIMIT_PER_HOUR: ${GENERATION_RATE_LIMIT_PER_HOUR:-20}
 
-volumes:
-  tv-tokens:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    network_mode: host
+    command: tunnel --no-autoupdate run
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}

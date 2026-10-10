@@ -1,10 +1,16 @@
 """Tests for the notification service."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
-from frame_art.services.notifier import Notifier, notify_failure, notify_success
+from frame_art.services.notifier import (
+    NotificationError,
+    Notifier,
+    notify_failure,
+    notify_success,
+)
 
 
 @pytest.mark.asyncio
@@ -13,12 +19,14 @@ async def test_send_notification():
 
     with patch("frame_art.services.notifier.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
-        mock_resp = AsyncMock()
+        mock_resp = MagicMock()
         mock_client.post.return_value = mock_resp
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await notifier.send(title="Test", message="Hello", tags=["test"])
+        await notifier.send(
+            title="Test", message="Hello", priority=3, tags=["test"]
+        )
 
         mock_client.post.assert_called_once()
         call_kwargs = mock_client.post.call_args
@@ -26,17 +34,25 @@ async def test_send_notification():
 
 
 @pytest.mark.asyncio
-async def test_send_notification_failure_does_not_raise():
+async def test_send_notification_failure_raises_actionable_error():
     notifier = Notifier(server="https://ntfy.sh", topic="test-topic")
 
     with patch("frame_art.services.notifier.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
-        mock_client.post.side_effect = Exception("Network error")
+        request = httpx.Request("POST", "https://ntfy.sh/test-topic")
+        mock_client.post.side_effect = httpx.ConnectError(
+            "Network error", request=request
+        )
         mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        # Should not raise
-        await notifier.send(title="Test", message="Hello")
+        with patch(
+            "frame_art.services.notifier.asyncio.sleep",
+            new_callable=AsyncMock,
+        ), pytest.raises(NotificationError, match="3 attempts"):
+            await notifier.send(
+                title="Test", message="Hello", priority=3, tags=None
+            )
 
 
 @pytest.mark.asyncio

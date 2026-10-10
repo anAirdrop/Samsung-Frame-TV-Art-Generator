@@ -18,14 +18,14 @@ def main() -> None:
         description="Test connectivity to configured Samsung Frame TVs"
     )
     parser.add_argument(
-        "--config", default="config.yaml", help="Path to config.yaml"
+        "--config", default="data/config.yaml", help="Path to config.yaml"
     )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     if not config.tvs:
-        print("No TVs configured in config.yaml")
+        print(f"No TVs configured in {args.config}")
         sys.exit(1)
 
     all_ok = True
@@ -46,8 +46,8 @@ def main() -> None:
             "in Art Mode, and on the same network."
         )
         sys.exit(1)
-    else:
-        print("\nAll TVs are reachable!")
+
+    print("\nAll TVs are reachable!")
 
 
 if __name__ == "__main__":

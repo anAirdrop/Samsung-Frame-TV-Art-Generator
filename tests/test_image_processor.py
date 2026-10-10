@@ -59,6 +59,6 @@ def test_process_handles_rgba_image():
 
 def test_process_default_output(sample_image_bytes):
     """Default output config should produce 3840x2160."""
-    result = process_image(sample_image_bytes)
+    result = process_image(sample_image_bytes, OutputConfig())
     img = Image.open(BytesIO(result))
     assert img.size == (3840, 2160)
